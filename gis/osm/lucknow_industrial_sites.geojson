@@ -1,0 +1,96 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          80.8872,
+          26.8315
+        ]
+      },
+      "properties": {
+        "name": "Talkatora Industrial Estate"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          80.8624,
+          26.7601
+        ]
+      },
+      "properties": {
+        "name": "Amausi Industrial Area"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          70.0577,
+          22.4707
+        ]
+      },
+      "properties": {
+        "name": "Jamnagar Petrochemical & Flare Complex"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          77.7011,
+          27.5956
+        ]
+      },
+      "properties": {
+        "name": "Mathura Refinery (IOCL)"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          86.1854,
+          22.8046
+        ]
+      },
+      "properties": {
+        "name": "Tata Steel Plant, Jamshedpur"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          85.9667,
+          20.9333
+        ]
+      },
+      "properties": {
+        "name": "Kalinganagar Industrial Corridor"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          81.38,
+          21.19
+        ]
+      },
+      "properties": {
+        "name": "Bhilai Steel Complex"
+      }
+    }
+  ]
+}
