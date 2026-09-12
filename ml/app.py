@@ -1,42 +1,74 @@
 import os
 import sys
-from datetime import datetime, timezone
-from typing import Dict, List, Optional
-
-# --- Dynamic Path Resolution to prevent ModuleNotFoundError on unpickling ---
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
-
-for path in [CURRENT_DIR, PROJECT_ROOT]:
-    if path not in sys.path:
-        sys.path.insert(0, path)
+from datetime import datetime
+from typing import Optional
 
 import joblib
 import pandas as pd
-from fastapi import FastAPI, HTTPException, status
+import psycopg2
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-# --- Load Serialized Pipeline Bundle ---
-MODEL_PATH = os.path.join(CURRENT_DIR, "models", "thermoguard_rf.pkl")
 
-if not os.path.exists(MODEL_PATH):
-    raise RuntimeError(
-        f"Critical Failure: Model bundle not found at '{MODEL_PATH}'. "
-        "Execute 'python ml/train_model.py' to generate the artifact."
-    )
+# ============================================================
+# PATHS
+# ============================================================
+
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
+
+sys.path.append(CURRENT_DIR)
+sys.path.append(PROJECT_ROOT)
+
+
+# ============================================================
+# ML MODEL
+# ============================================================
+
+MODEL_PATH = os.path.join(
+    CURRENT_DIR,
+    "models",
+    "thermoguard_rf.pkl"
+)
 
 bundle = joblib.load(MODEL_PATH)
-pipeline = bundle["pipeline"]
-classes: List[str] = bundle["classes"]
-model_version: str = bundle.get("model_version", "RF-v1.0")
 
-# --- App Initialization ---
+pipeline = bundle["pipeline"]
+classes = bundle["classes"]
+model_version = bundle.get("model_version", "RF-v1.0")
+
+
+# ============================================================
+# DATABASE CONFIG
+# ============================================================
+
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "thermoguard")
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "Gaurav@123")
+
+def get_db_connection():
+    return psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD
+    )
+
+
+# ============================================================
+# FASTAPI
+# ============================================================
+
 app = FastAPI(
-    title="ThermoGuard AI - Thermal Anomaly ML Microservice",
-    description="Operational REST API for real-time industrial fire and flare discrimination (SIH26162).",
-    version=model_version,
+    title="ThermoGuard AI API",
+    description="ThermoGuard AI ML + PostgreSQL/PostGIS API",
+    version="1.0.0"
 )
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -47,41 +79,24 @@ app.add_middleware(
 )
 
 
-# --- Pydantic v2 Schemas ---
-class HotspotInput(BaseModel):
-    latitude: float = Field(..., description="WGS84 Latitude coordinate")
-    longitude: float = Field(..., description="WGS84 Longitude coordinate")
-    frp: float = Field(..., ge=0.0, description="Fire Radiative Power (MW)")
-    brightness_k: float = Field(..., ge=0.0, description="Brightness temperature in Kelvin")
-    distance_to_facility_km: Optional[float] = Field(
-        None, description="Distance to nearest industrial facility in km"
-    )
-    persistence_count_30d: int = Field(
-        1, ge=1, description="Number of distinct active days in 30-day baseline"
-    )
-    acq_timestamp_ist: Optional[str] = Field(
-        None, description="Acquisition timestamp in IST (e.g., '2026-09-12 18:45:00 IST')"
-    )
+# ============================================================
+# MODELS
+# ============================================================
 
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "latitude": 22.4707,
-                "longitude": 70.0577,
-                "frp": 310.0,
-                "brightness_k": 382.4,
-                "distance_to_facility_km": 0.42,
-                "persistence_count_30d": 1,
-                "acq_timestamp_ist": "2026-09-12 18:45:00 IST",
-            }
-        }
-    }
+class HotspotInput(BaseModel):
+    latitude: float
+    longitude: float
+    frp: float
+    brightness_k: float
+    distance_to_facility_km: Optional[float] = None
+    persistence_count_30d: int = 1
+    acq_timestamp_ist: Optional[str] = None
 
 
 class PredictionResponse(BaseModel):
     prediction: str
     confidence: float
-    probabilities: Dict[str, float]
+    probabilities: dict
     model_version: str
     explanation: str
 
@@ -89,127 +104,385 @@ class PredictionResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     model_version: str
-    supported_classes: List[str]
+    supported_classes: list
     timestamp_utc: str
 
 
-# --- Helper: Feature-Attribution Narrative Generator ---
-def build_explanation(record: dict, predicted_class: str) -> str:
+# ============================================================
+# ML EXPLANATION
+# ============================================================
+
+def build_explanation(data: HotspotInput) -> str:
+
     reasons = []
-    frp_val = float(record.get("frp", 0.0))
-    dist_val = record.get("distance_to_facility_km")
-    rec_val = int(record.get("persistence_count_30d", 1))
 
-    if dist_val is not None and float(dist_val) <= 5.0:
-        reasons.append(f"spatial proximity to an industrial facility ({float(dist_val):.2f} km)")
-    else:
-        reasons.append("rural coordinates beyond active industrial buffers")
+    if data.distance_to_facility_km is not None:
+        if data.distance_to_facility_km <= 2:
+            reasons.append("very close to an industrial facility")
+        elif data.distance_to_facility_km <= 10:
+            reasons.append("near an industrial facility")
 
-    if frp_val >= 150.0:
-        reasons.append(f"very high radiative power ({frp_val:.1f} MW)")
-    elif frp_val < 30.0:
-        reasons.append(f"low-intensity thermal signature ({frp_val:.1f} MW)")
-    else:
-        reasons.append(f"moderate thermal radiative power ({frp_val:.1f} MW)")
+    if data.frp >= 100:
+        reasons.append("high fire radiative power")
 
-    if rec_val >= 3:
-        reasons.append(f"repeated temporal persistence ({rec_val} recorded events)")
-    else:
-        reasons.append("isolated/spontaneous thermal occurrence")
+    if data.persistence_count_30d >= 3:
+        reasons.append("repeated thermal activity")
 
-    return (
-        f"Event labeled as {predicted_class} primarily based on: "
-        + "; ".join(reasons)
-        + ". (Note: Statistical feature correlation, not verified physical causality)."
-    )
+    if not reasons:
+        return "Classification based on thermal hotspot characteristics."
+
+    return "Classification influenced by " + ", ".join(reasons) + "."
 
 
-# --- API Routes ---
-@app.get("/health", response_model=HealthResponse, tags=["Diagnostics"])
-def health_check():
-    """Returns microservice health, active model version, and class labels."""
+# ============================================================
+# HEALTH
+# ============================================================
+
+@app.get("/health", response_model=HealthResponse)
+def health():
+
     return HealthResponse(
-        status="HEALTHY",
+        status="healthy",
         model_version=model_version,
-        supported_classes=classes,
-        timestamp_utc=datetime.now(timezone.utc).isoformat(),
+        supported_classes=list(classes),
+        timestamp_utc=datetime.utcnow().isoformat()
     )
 
 
-@app.post("/predict", response_model=PredictionResponse, tags=["Inference"])
-def predict_single(hotspot: HotspotInput):
-    """Classifies a single satellite thermal event with calibrated probabilities and explanation."""
+# ============================================================
+# DATABASE TEST
+# ============================================================
+
+@app.get("/api/db-test")
+def database_test():
+
     try:
-        input_data = hotspot.model_dump()
-        df_input = pd.DataFrame([input_data])
+        conn = get_db_connection()
+        cursor = conn.cursor()
 
-        probabilities = pipeline.predict_proba(df_input)[0]
-        pred_idx = probabilities.argmax()
-        predicted_class = classes[pred_idx]
-        confidence = float(probabilities[pred_idx])
+        cursor.execute("SELECT 1;")
+        result = cursor.fetchone()
 
-        prob_dict = {
-            cls_name: round(float(prob), 4)
-            for cls_name, prob in zip(classes, probabilities)
+        cursor.close()
+        conn.close()
+
+        return {
+            "status": "connected",
+            "database": DB_NAME,
+            "result": result[0]
         }
-        explanation = build_explanation(input_data, predicted_class)
 
-        return PredictionResponse(
-            prediction=predicted_class,
-            confidence=round(confidence, 4),
-            probabilities=prob_dict,
-            model_version=model_version,
-            explanation=explanation,
-        )
     except Exception as e:
+
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Inference execution failed: {str(e)}",
+            status_code=500,
+            detail=f"Database connection failed: {str(e)}"
         )
 
 
-@app.post("/predict/batch", response_model=List[PredictionResponse], tags=["Inference"])
-def predict_batch(hotspots: List[HotspotInput]):
-    """Batch-classifies a collection of thermal anomalies in a single pass."""
-    if not hotspots:
+# ============================================================
+# HOTSPOTS FROM POSTGRESQL
+# ============================================================
+
+@app.get("/api/hotspots")
+def get_hotspots():
+
+    query = """
+        SELECT
+            a.id,
+            a.latitude,
+            a.longitude,
+            a.frp,
+            a.brightness_k,
+            a.satellite,
+            TO_CHAR(
+                a.acq_timestamp_ist,
+                'YYYY-MM-DD HH24:MI:SS'
+            ) || ' IST' AS acq_timestamp_ist,
+            a.persistence_count_30d,
+
+            e.nearest_facility,
+            e.distance_to_facility_km,
+            e.classification,
+            e.severity,
+            e.confidence_score,
+            e.ml_prediction,
+            e.ml_confidence,
+            e.ml_explanation
+
+        FROM thermal_anomalies a
+
+        LEFT JOIN classified_events e
+            ON e.anomaly_id = a.id
+
+        ORDER BY a.acq_timestamp_ist DESC;
+    """
+
+    try:
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(query)
+
+        columns = [desc[0] for desc in cursor.description]
+
+        rows = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
+
+        data = []
+
+        for row in rows:
+
+            item = dict(zip(columns, row))
+
+            data.append(item)
+
+        return data
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch hotspots: {str(e)}"
+        )
+
+
+# ============================================================
+# INDUSTRIAL SITES
+# ============================================================
+
+@app.get("/api/industrial-sites")
+def get_industrial_sites():
+
+    query = """
+        SELECT
+            id,
+            name,
+            latitude,
+            longitude
+        FROM industrial_sites
+        ORDER BY id;
+    """
+
+    try:
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(query)
+
+        columns = [desc[0] for desc in cursor.description]
+
+        rows = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
+
+        return [
+            dict(zip(columns, row))
+            for row in rows
+        ]
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch industrial sites: {str(e)}"
+        )
+
+
+# ============================================================
+# ALERTS
+# ============================================================
+
+@app.get("/api/alerts")
+def get_alerts():
+
+    query = """
+        SELECT
+            id,
+            event_id,
+            severity,
+            message,
+            status,
+            created_at
+        FROM alerts
+        ORDER BY created_at DESC, id DESC;
+    """
+
+    try:
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(query)
+
+        columns = [desc[0] for desc in cursor.description]
+
+        rows = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
+
+        return [
+            dict(zip(columns, row))
+            for row in rows
+        ]
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch alerts: {str(e)}"
+        )
+
+
+# ============================================================
+# STATISTICS
+# ============================================================
+
+@app.get("/api/stats")
+def get_stats():
+
+    query = """
+        SELECT
+            (SELECT COUNT(*) FROM thermal_anomalies) AS total_anomalies,
+            (SELECT COUNT(*) FROM classified_events) AS total_events,
+            (SELECT COUNT(*) FROM industrial_sites) AS industrial_sites,
+            (SELECT COUNT(*) FROM alerts) AS alerts;
+    """
+
+    try:
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(query)
+
+        row = cursor.fetchone()
+
+        cursor.close()
+        conn.close()
+
+        return {
+            "total_anomalies": row[0],
+            "total_events": row[1],
+            "industrial_sites": row[2],
+            "alerts": row[3]
+        }
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch statistics: {str(e)}"
+        )
+
+
+# ============================================================
+# ML PREDICTION
+# ============================================================
+
+@app.post("/predict", response_model=PredictionResponse)
+def predict(data: HotspotInput):
+
+    features = pd.DataFrame([{
+        "latitude": data.latitude,
+        "longitude": data.longitude,
+        "frp": data.frp,
+        "brightness_k": data.brightness_k,
+        "distance_to_facility_km": data.distance_to_facility_km,
+        "persistence_count_30d": data.persistence_count_30d
+    }])
+
+    prediction = pipeline.predict(features)[0]
+
+    probabilities_array = pipeline.predict_proba(features)[0]
+
+    probabilities = {
+        str(cls): float(prob)
+        for cls, prob in zip(classes, probabilities_array)
+    }
+
+    confidence = float(max(probabilities_array))
+
+    explanation = build_explanation(data)
+
+    return PredictionResponse(
+        prediction=str(prediction),
+        confidence=confidence,
+        probabilities=probabilities,
+        model_version=model_version,
+        explanation=explanation
+    )
+
+
+# ============================================================
+# BATCH PREDICTION
+# ============================================================
+
+@app.post("/predict/batch")
+def predict_batch(data: list[HotspotInput]):
+
+    if not data:
         return []
 
-    try:
-        records = [h.model_dump() for h in hotspots]
-        df_batch = pd.DataFrame(records)
+    features = pd.DataFrame([
+        {
+            "latitude": item.latitude,
+            "longitude": item.longitude,
+            "frp": item.frp,
+            "brightness_k": item.brightness_k,
+            "distance_to_facility_km": item.distance_to_facility_km,
+            "persistence_count_30d": item.persistence_count_30d
+        }
+        for item in data
+    ])
 
-        prob_matrix = pipeline.predict_proba(df_batch)
-        results = []
+    predictions = pipeline.predict(features)
 
-        for idx, (record, probs) in enumerate(zip(records, prob_matrix)):
-            pred_idx = probs.argmax()
-            predicted_class = classes[pred_idx]
-            confidence = float(probs[pred_idx])
+    probabilities_array = pipeline.predict_proba(features)
 
-            prob_dict = {
-                cls_name: round(float(p), 4)
-                for cls_name, p in zip(classes, probs)
-            }
-            explanation = build_explanation(record, predicted_class)
+    results = []
 
-            results.append(
-                PredictionResponse(
-                    prediction=predicted_class,
-                    confidence=round(confidence, 4),
-                    probabilities=prob_dict,
-                    model_version=model_version,
-                    explanation=explanation,
-                )
+    for i, prediction in enumerate(predictions):
+
+        probabilities = {
+            str(cls): float(prob)
+            for cls, prob in zip(
+                classes,
+                probabilities_array[i]
             )
+        }
 
-        return results
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Batch inference execution failed: {str(e)}",
+        confidence = float(
+            max(probabilities_array[i])
         )
 
+        results.append({
+            "prediction": str(prediction),
+            "confidence": confidence,
+            "probabilities": probabilities,
+            "model_version": model_version
+        })
+
+    return results
+
+
+# ============================================================
+# RUN
+# ============================================================
 
 if __name__ == "__main__":
+
     import uvicorn
-    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)
+
+    uvicorn.run(
+        "app:app",
+        host="127.0.0.1",
+        port=8000,
+        reload=True
+    )
