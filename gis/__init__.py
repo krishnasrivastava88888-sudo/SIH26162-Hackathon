@@ -1,0 +1,1 @@
+"""ThermoGuard GIS intelligence modules."""
