@@ -589,24 +589,57 @@ async function loadIndustrialSites() {
 
         async function loadHotspots() {
     try {
-        const response = await fetch("http://127.0.0.1:8000/api/hotspots");
+        const [hotspotsResponse, eventsResponse] = await Promise.all([
+            fetch("http://127.0.0.1:8000/api/hotspots"),
+            fetch("http://127.0.0.1:8000/events/")
+        ]);
 
-        if (!response.ok) {
-            throw new Error(`API returned ${response.status}`);
+        if (!hotspotsResponse.ok) {
+            throw new Error(`Hotspots API returned ${hotspotsResponse.status}`);
         }
 
-        rawHotspots = await response.json();
+        if (!eventsResponse.ok) {
+            throw new Error(`Events API returned ${eventsResponse.status}`);
+        }
 
-        console.log("Hotspots loaded from PostgreSQL:", rawHotspots.length);
+        const hotspots = await hotspotsResponse.json();
+        const events = await eventsResponse.json();
+
+        console.log("Hotspots loaded:", hotspots.length);
+        console.log("Events loaded:", events.length);
+
+        const eventMap = new Map(
+            events.map(event => [event.anomaly_id, event])
+        );
+
+        rawHotspots = hotspots.map(hotspot => {
+            const event = eventMap.get(hotspot.id);
+
+            return {
+                ...hotspot,
+
+                classification: event?.classification || "UNKNOWN",
+                severity: event?.severity || "UNKNOWN",
+                nearest_facility: event?.nearest_facility || "None (Open / Rural Area)",
+                distance_to_facility_km: event?.distance_to_facility_km ?? null,
+
+                confidence_score: event?.confidence_score ?? null,
+                ml_prediction: event?.ml_prediction || null,
+                ml_confidence: event?.ml_confidence ?? null,
+                ml_explanation: event?.ml_explanation || null
+            };
+        });
+
+        console.log("Combined records:", rawHotspots.length);
 
         renderView();
 
     } catch (error) {
-        console.error("Failed to load hotspots:", error);
+        console.error("Failed to load hotspot/event data:", error);
 
         document.getElementById("incidentFeed").innerHTML =
             `<div style="padding:20px;color:#ef4444;">
-                Failed to load hotspot data from API.
+                Failed to load hotspot/event data from API.
              </div>`;
     }
 }
