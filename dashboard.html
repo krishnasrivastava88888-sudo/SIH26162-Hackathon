@@ -696,18 +696,31 @@
         const events = eRes ? await eRes.json() : [];
 
         const eventMap = new Map();
-        events.forEach(e => eventMap.set(e.hotspot_id, e));
+events.forEach(e => eventMap.set(e.anomaly_id, e));
 
-        allHotspots = hotspots.map(h => {
-          const ev = eventMap.get(h.id) || {};
-          return {
-            ...h,
-            classification: ev.event_type || h.classification || 'AGRICULTURAL_FIRE',
-            confidence: ev.confidence || 0.95,
-            explanation: ev.explanation || 'Evaluated by ThermoGuard RF-v2.0 geospatial pipeline.',
-            facility_name: ev.facility_name || (h.distance_to_facility_km < 5 ? 'Industrial Buffer Zone' : 'Rural Sector')
-          };
-        });
+allHotspots = hotspots.map(h => {
+    const ev = eventMap.get(h.id) || {};
+
+    return {
+        ...h,
+
+        // Correct backend event fields
+        classification: ev.classification || h.classification || 'AGRICULTURAL_FIRE',
+        confidence: ev.confidence_score ?? 0.95,
+        explanation: ev.ml_explanation || 'Evaluated by ThermoGuard RF-v2.0 geospatial pipeline.',
+
+        // Industrial facility information
+        facility_name:
+            ev.nearest_facility ||
+            (h.distance_to_facility_km != null && h.distance_to_facility_km < 5
+                ? 'Industrial Buffer Zone'
+                : 'Rural Sector'),
+
+        // Keep the backend GIS values available
+        distance_to_facility_km:
+            ev.distance_to_facility_km ?? h.distance_to_facility_km
+    };
+});
 
         updateKPIs();
         renderMapAndFeed();
