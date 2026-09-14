@@ -776,22 +776,79 @@
           }).addTo(hotspotLayerGroup);
         }
 
-        // Popup with Risk Telemetry
+                // Popup with Risk Telemetry
         marker.bindPopup(`
-          <div style="font-family: 'Inter', sans-serif; color: #111827; min-width: 220px;">
+          <div style="font-family: 'Inter', sans-serif; color: #111827; min-width: 240px;">
+
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
               <strong style="color: ${risk.color}; font-size: 12px;">${h.classification}</strong>
-              <span style="font-size: 10.5px; font-weight: 700; color: ${risk.color};">RISK: ${risk.score}/100</span>
+              <span style="font-size: 10.5px; font-weight: 700; color: ${risk.color};">
+                RISK: ${risk.score}/100
+              </span>
             </div>
-            <div style="height: 4px; background: #E5E7EB; border-radius: 2px; overflow: hidden; margin-bottom: 6px;">
+
+            <div style="height: 4px; background: #E5E7EB; border-radius: 2px; overflow: hidden; margin-bottom: 7px;">
               <div style="width: ${risk.score}%; height: 100%; background: ${risk.color};"></div>
             </div>
-            <p style="margin: 2px 0; font-size: 11px;"><strong>Location:</strong> ${h.facility_name}</p>
-            <p style="margin: 2px 0; font-size: 11px;"><strong>Radiative Power:</strong> ${h.frp.toFixed(1)} MW</p>
-            <p style="margin: 2px 0; font-size: 11px;"><strong>Proximity:</strong> ${h.distance_to_facility_km ? h.distance_to_facility_km.toFixed(2) + ' km' : 'N/A'}</p>
-            <div style="margin-top: 6px; font-size: 10.5px; color: #4B5563; background: #F3F4F6; padding: 6px; border-radius: 4px; border-left: 2px solid ${risk.color};">
+
+            <p style="margin: 3px 0; font-size: 11px;">
+              <strong>Risk Tier:</strong> ${risk.tier}
+            </p>
+
+            <p style="margin: 3px 0; font-size: 11px;">
+              <strong>Hotspot ID:</strong> ${h.id || 'N/A'}
+            </p>
+
+            <p style="margin: 3px 0; font-size: 11px;">
+              <strong>Latitude:</strong> ${h.latitude != null ? h.latitude : 'N/A'}
+            </p>
+
+            <p style="margin: 3px 0; font-size: 11px;">
+              <strong>Longitude:</strong> ${h.longitude != null ? h.longitude : 'N/A'}
+            </p>
+
+            <p style="margin: 3px 0; font-size: 11px;">
+              <strong>Location:</strong> ${h.facility_name}
+            </p>
+
+            <p style="margin: 3px 0; font-size: 11px;">
+              <strong>Brightness Temperature:</strong>
+              ${h.brightness_k != null ? h.brightness_k + ' K' : 'N/A'}
+            </p>
+
+            <p style="margin: 3px 0; font-size: 11px;">
+              <strong>Satellite:</strong>
+              ${h.satellite || 'N/A'}
+            </p>
+
+            <p style="margin: 3px 0; font-size: 11px;">
+              <strong>Acquisition Time:</strong>
+              ${h.acq_timestamp_ist || 'N/A'}
+            </p>
+
+            <p style="margin: 3px 0; font-size: 11px;">
+              <strong>Radiative Power:</strong> ${h.frp.toFixed(1)} MW
+            </p>
+
+            <p style="margin: 3px 0; font-size: 11px;">
+              <strong>Proximity:</strong>
+              ${h.distance_to_facility_km != null
+                ? h.distance_to_facility_km.toFixed(2) + ' km'
+                : 'N/A'}
+            </p>
+
+            <p style="margin: 3px 0; font-size: 11px;">
+              <strong>Recurrence:</strong> ${h.persistence_count_30d || 1} days
+            </p>
+
+            <p style="margin: 3px 0; font-size: 11px;">
+              <strong>Confidence:</strong> ${(h.confidence * 100).toFixed(1)}%
+            </p>
+
+            <div style="margin-top: 7px; font-size: 10.5px; color: #4B5563; background: #F3F4F6; padding: 6px; border-radius: 4px; border-left: 2px solid ${risk.color};">
               ${h.explanation}
             </div>
+
           </div>
         `);
 
