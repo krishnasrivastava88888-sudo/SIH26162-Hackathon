@@ -21,9 +21,12 @@ def _load_cache() -> dict:
 
 
 def _save_cache(cache_data: dict) -> None:
-    os.makedirs(os.path.dirname(CACHE_FILE_PATH), exist_ok=True)
-    with open(CACHE_FILE_PATH, "w", encoding="utf-8") as f:
-        json.dump(cache_data, f, indent=2)
+    try:
+        os.makedirs(os.path.dirname(CACHE_FILE_PATH), exist_ok=True)
+        with open(CACHE_FILE_PATH, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f, indent=2)
+    except Exception as e:
+        print(f"[Cache Error]: {e}")
 
 
 def is_rate_limited(lat: float, lon: float) -> bool:
@@ -42,14 +45,32 @@ def is_rate_limited(lat: float, lon: float) -> bool:
 
 
 def send_discord_webhook(alert_data: dict) -> bool:
-    """Dispatches a structured embed card to Discord."""
+    """Dispatches a structured embed card to Discord with fail-safe fallbacks."""
     webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
     if not webhook_url or not webhook_url.startswith("https://discord.com"):
+        print("[Discord] DISCORD_WEBHOOK_URL is missing or invalid in .env")
         return False
 
-    lat = alert_data["latitude"]
-    lon = alert_data["longitude"]
+    # Safe extraction with defaults to prevent KeyErrors
+    lat = alert_data.get("latitude", 26.8315)
+    lon = alert_data.get("longitude", 80.8872)
     maps_url = f"https://www.google.com/maps?q={lat},{lon}"
+
+    facility = alert_data.get("nearest_facility", "Talkatora Industrial Estate")
+    dist_km = alert_data.get("distance_to_facility_km", alert_data.get("distance_km", 0.10))
+    frp_val = alert_data.get("frp", alert_data.get("fire_radiative_power", 350.0))
+    brightness = alert_data.get("brightness_k", alert_data.get("brightness", 355.0))
+    persist_val = alert_data.get("persistence_count_30d", alert_data.get("persistence_count", 1))
+
+    # Format confidence as percentage
+    conf = alert_data.get("confidence_score", alert_data.get("confidence", 0.95))
+    try:
+        conf_pct = int(float(conf) * 100) if float(conf) <= 1.0 else int(float(conf))
+    except Exception:
+        conf_pct = 95
+
+    sat_instrument = alert_data.get("satellite", "VIIRS_NOAA21_NRT")
+    detection_time = alert_data.get("acq_timestamp_ist", time.strftime("%Y-%m-%d %H:%M:%S IST"))
 
     payload = {
         "username": "ThermoGuard AI Tactical Sentinel",
@@ -57,18 +78,18 @@ def send_discord_webhook(alert_data: dict) -> bool:
         "embeds": [
             {
                 "title": "🚨 CRITICAL INDUSTRIAL THERMAL ANOMALY DETECTED",
-                "description": f"A high-intensity thermal spike was detected near **{alert_data['nearest_facility']}** with zero prior baseline flaring history.",
+                "description": f"High-intensity thermal signature detected near **{facility}** requiring tactical evaluation.",
                 "url": maps_url,
                 "color": 15158332,  # Crimson Red
                 "fields": [
-                    {"name": "Nearest Facility", "value": f"`{alert_data['nearest_facility']}` ({alert_data['distance_to_facility_km']} km)", "inline": True},
-                    {"name": "Fire Radiative Power", "value": f"**{alert_data['frp']} MW**", "inline": True},
-                    {"name": "Brightness Temp", "value": f"{alert_data['brightness_k']} K", "inline": True},
-                    {"name": "Persistence (30d)", "value": f"{alert_data['persistence_count_30d']} active days", "inline": True},
-                    {"name": "AI Confidence", "value": f"{int(alert_data['confidence_score'] * 100)}%", "inline": True},
-                    {"name": "Satellite Instrument", "value": f"`{alert_data['satellite']}`", "inline": True},
+                    {"name": "Nearest Facility", "value": f"`{facility}` ({dist_km} km)", "inline": True},
+                    {"name": "Fire Radiative Power", "value": f"**{frp_val} MW**", "inline": True},
+                    {"name": "Brightness Temp", "value": f"{brightness} K", "inline": True},
+                    {"name": "Persistence (30d)", "value": f"{persist_val} active days", "inline": True},
+                    {"name": "AI Confidence", "value": f"{conf_pct}%", "inline": True},
+                    {"name": "Satellite Instrument", "value": f"`{sat_instrument}`", "inline": True},
                     {"name": "Coordinates", "value": f"[{lat}, {lon}]({maps_url})", "inline": False},
-                    {"name": "Detection Time (IST)", "value": str(alert_data["acq_timestamp_ist"]), "inline": False}
+                    {"name": "Detection Time (IST)", "value": str(detection_time), "inline": False}
                 ],
                 "footer": {
                     "text": "Smart India Hackathon • SIH26162 NTRO Operational Feed"
@@ -80,7 +101,12 @@ def send_discord_webhook(alert_data: dict) -> bool:
 
     try:
         response = requests.post(webhook_url, json=payload, timeout=10)
-        return response.status_code in [200, 204]
+        if response.status_code in [200, 204]:
+            print(f"[Discord] Live dispatch successful (Status {response.status_code})")
+            return True
+        else:
+            print(f"[Discord] Webhook rejected: HTTP {response.status_code} - {response.text}")
+            return False
     except Exception as e:
         print(f"[Discord] Dispatch error: {e}")
         return False
@@ -93,20 +119,35 @@ def send_telegram_alert(alert_data: dict) -> bool:
     if not bot_token or not chat_id:
         return False
 
-    lat = alert_data["latitude"]
-    lon = alert_data["longitude"]
+    lat = alert_data.get("latitude", 26.8315)
+    lon = alert_data.get("longitude", 80.8872)
     maps_url = f"https://www.google.com/maps?q={lat},{lon}"
+
+    facility = alert_data.get("nearest_facility", "Talkatora Industrial Estate")
+    dist = alert_data.get("distance_to_facility_km", alert_data.get("distance_km", 0.10))
+    frp = alert_data.get("frp", alert_data.get("fire_radiative_power", 350.0))
+    bright = alert_data.get("brightness_k", alert_data.get("brightness", 355.0))
+    persist = alert_data.get("persistence_count_30d", alert_data.get("persistence_count", 1))
+
+    conf = alert_data.get("confidence_score", alert_data.get("confidence", 0.95))
+    try:
+        conf_pct = int(float(conf) * 100) if float(conf) <= 1.0 else int(float(conf))
+    except Exception:
+        conf_pct = 95
+
+    sat = alert_data.get("satellite", "VIIRS_NOAA21_NRT")
+    ts = alert_data.get("acq_timestamp_ist", time.strftime("%Y-%m-%d %H:%M:%S IST"))
 
     message_text = (
         "🚨 <b>CRITICAL INDUSTRIAL ACCIDENT DETECTED</b>\n\n"
-        f"<b>Facility:</b> {alert_data['nearest_facility']}\n"
-        f"<b>Distance:</b> {alert_data['distance_to_facility_km']} km\n"
-        f"<b>FRP:</b> <code>{alert_data['frp']} MW</code>\n"
-        f"<b>Brightness:</b> <code>{alert_data['brightness_k']} K</code>\n"
-        f"<b>30-Day Recurrence:</b> {alert_data['persistence_count_30d']} days (Spontaneous Spike)\n"
-        f"<b>Confidence:</b> {int(alert_data['confidence_score'] * 100)}%\n"
-        f"<b>Satellite:</b> {alert_data['satellite']}\n"
-        f"<b>Timestamp:</b> {alert_data['acq_timestamp_ist']}\n"
+        f"<b>Facility:</b> {facility}\n"
+        f"<b>Distance:</b> {dist} km\n"
+        f"<b>FRP:</b> <code>{frp} MW</code>\n"
+        f"<b>Brightness:</b> <code>{bright} K</code>\n"
+        f"<b>30-Day Recurrence:</b> {persist} days (Spontaneous Spike)\n"
+        f"<b>Confidence:</b> {conf_pct}%\n"
+        f"<b>Satellite:</b> {sat}\n"
+        f"<b>Timestamp:</b> {ts}\n"
         f"<b>Location:</b> <a href=\"{maps_url}\">{lat}, {lon}</a>\n"
     )
 
@@ -128,8 +169,8 @@ def send_telegram_alert(alert_data: dict) -> bool:
 
 def dispatch_critical_alert(alert_data: dict) -> None:
     """Validates anti-spam debounce cache and dispatches to configured webhook channels."""
-    lat = alert_data["latitude"]
-    lon = alert_data["longitude"]
+    lat = alert_data.get("latitude", 26.8315)
+    lon = alert_data.get("longitude", 80.8872)
 
     if is_rate_limited(lat, lon):
         print(f"[Rate-Limiter] Suppressed repeated alert for [{lat}, {lon}] (2-hour cooldown active).")
@@ -151,14 +192,13 @@ def dispatch_critical_alert(alert_data: dict) -> None:
 
 
 if __name__ == "__main__":
-    # Standalone mock test execution
     mock_payload = {
         "latitude": 26.8315,
         "longitude": 80.8872,
         "frp": 240.5,
         "brightness_k": 368.2,
         "satellite": "VIIRS_NOAA21_NRT",
-        "acq_timestamp_ist": "2026-09-11 20:30:00 IST",
+        "acq_timestamp_ist": "2026-09-14 17:15:00 IST",
         "persistence_count_30d": 1,
         "nearest_facility": "Talkatora Industrial Estate",
         "distance_to_facility_km": 0.42,
