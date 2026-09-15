@@ -20,41 +20,59 @@ from scripts.webhook_notifier import send_discord_webhook
 
 DASHBOARD_PATH = os.path.join(BASE_DIR, "dashboard.html")
 
-# Initialize APScheduler for automated 6-hour FIRMS sync
+
+# Initialize APScheduler for automated 5-minute live FIRMS pipeline
 scheduler = BackgroundScheduler()
 
 
 def scheduled_firms_ingestion_job():
-  """Automated background worker to pull NASA FIRMS, run inference, and sync."""
+  """Run the complete NASA FIRMS -> ML -> GIS -> PostgreSQL pipeline."""
   try:
-    print("[Scheduler] Starting automated 6-hour NASA FIRMS telemetry sync...")
-    from scripts.create_map import generate_map_dossier
-    from scripts.sync_to_postgres import sync_database
+    print("[Scheduler] Starting automated 5-minute live telemetry pipeline...")
 
-    sync_database()
-    generate_map_dossier()
-    print(
-        "[Scheduler] FIRMS telemetry ingestion and map dossier refresh"
-        " completed successfully."
-    )
+    import subprocess
+
+    steps = [
+        ["scripts/download_firms.py"],
+        ["scripts/persistence_engine.py"],
+        ["gis/run_member3.py"],
+        ["scripts/sync_to_postgres.py"],
+        ["scripts/create_map.py"],
+    ]
+
+    for step in steps:
+      script = step[0]
+      print(f"[Scheduler] Running {script}...")
+      result = subprocess.run(
+          [sys.executable, script],
+          cwd=BASE_DIR,
+      )
+
+      if result.returncode != 0:
+        print(f"[Scheduler Error] {script} failed.")
+        return
+
+    print("[Scheduler] 5-minute live telemetry pipeline completed successfully.")
+
   except Exception as e:
     print(f"[Scheduler Error] FIRMS auto-ingestion failed: {e}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-  # Startup: Schedule 6-hour background ingestion job
+  # Startup: Schedule complete live pipeline every 5 minutes
   scheduler.add_job(
       scheduled_firms_ingestion_job,
       "interval",
-      hours=6,
+      minutes=5,
       id="firms_sync_job",
       replace_existing=True,
+      max_instances=1,
   )
   scheduler.start()
   print(
-      "[Scheduler] APScheduler started successfully (FIRMS sync interval: 6"
-      " hours)."
+      "[Scheduler] APScheduler started successfully "
+      "(live pipeline interval: 5 minutes)."
   )
   yield
   # Shutdown: Stop scheduler

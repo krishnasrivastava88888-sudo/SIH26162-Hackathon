@@ -51,6 +51,12 @@ def sync_enriched_hotspots():
 
   print(f"[*] Synchronizing {len(records)} enriched records into PostgreSQL...")
 
+  # Replace the previous hotspot snapshot so stale records are removed.
+  # Replace the previous hotspot snapshot so stale records are removed.`r`n  cur.execute("DELETE FROM classified_events;")
+  cur.execute("DELETE FROM thermal_anomalies;")
+
+  print("[*] Cleared previous hotspot snapshot.")
+
   synced_count = 0
   for r in records:
     rec_id = generate_hotspot_id(r)

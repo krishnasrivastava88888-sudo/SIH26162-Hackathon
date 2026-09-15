@@ -991,10 +991,16 @@
 
     // 8. Lifecycle Bootstrapping
     window.onload = () => {
-      initMap();
-      loadIndustrialSites();
-      loadHotspots();
-    };
+  initMap();
+  loadIndustrialSites();
+  loadHotspots();
+
+  // Automatically refresh dashboard data every 5 minutes
+  setInterval(() => {
+    console.log("🔄 Refreshing live hotspot telemetry...");
+    loadHotspots();
+  }, 5 * 60 * 1000);
+};
   </script>
 </body>
 </html>

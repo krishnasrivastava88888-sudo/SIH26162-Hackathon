@@ -144,3 +144,4 @@ websocket-client @ file:///C:/b/abs_5dmnxxoci9/croot/websocket-client_1715878351
 websockets==17.1
 widgetsnbextension @ file:///C:/miniconda3/conda-bld/widgetsnbextension_1761556763484/work
 win_inet_pton @ file:///C:/miniconda3/conda-bld/win_inet_pton_1761746278197/work
+APScheduler==3.11.3
