@@ -1,6 +1,9 @@
+from contextlib import asynccontextmanager
 import os
 import sys
 from typing import List, Optional
+
+from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -17,6 +20,48 @@ from scripts.webhook_notifier import send_discord_webhook
 
 DASHBOARD_PATH = os.path.join(BASE_DIR, "dashboard.html")
 
+# Initialize APScheduler for automated 6-hour FIRMS sync
+scheduler = BackgroundScheduler()
+
+
+def scheduled_firms_ingestion_job():
+  """Automated background worker to pull NASA FIRMS, run inference, and sync."""
+  try:
+    print("[Scheduler] Starting automated 6-hour NASA FIRMS telemetry sync...")
+    from scripts.create_map import generate_map_dossier
+    from scripts.sync_to_postgres import sync_database
+
+    sync_database()
+    generate_map_dossier()
+    print(
+        "[Scheduler] FIRMS telemetry ingestion and map dossier refresh"
+        " completed successfully."
+    )
+  except Exception as e:
+    print(f"[Scheduler Error] FIRMS auto-ingestion failed: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+  # Startup: Schedule 6-hour background ingestion job
+  scheduler.add_job(
+      scheduled_firms_ingestion_job,
+      "interval",
+      hours=6,
+      id="firms_sync_job",
+      replace_existing=True,
+  )
+  scheduler.start()
+  print(
+      "[Scheduler] APScheduler started successfully (FIRMS sync interval: 6"
+      " hours)."
+  )
+  yield
+  # Shutdown: Stop scheduler
+  scheduler.shutdown()
+  print("[Scheduler] APScheduler shut down.")
+
+
 app = FastAPI(
     title="ThermoGuard AI | Tactical Threat Intelligence API",
     description=(
@@ -24,6 +69,7 @@ app = FastAPI(
         " classification pipeline"
     ),
     version="2.0.0",
+    lifespan=lifespan,
 )
 
 # Enable CORS for local dashboards and web clients
@@ -102,6 +148,7 @@ def health_check():
       "service": "ThermoGuardAI Tactical Gateway",
       "ml_engine": "RF-v2.0 Active",
       "database": "PostgreSQL 16 / PostGIS",
+      "scheduler": "APScheduler 6-Hour Active",
   }
 
 
@@ -117,13 +164,10 @@ def predict_anomaly(
     res_dict = (
         result
         if isinstance(result, dict)
-        else (
-            result.model_dump() if hasattr(result, "model_dump") else {}
-        )
+        else (result.model_dump() if hasattr(result, "model_dump") else {})
     )
     combined = {**input_data, **res_dict}
 
-    # Extract and normalize score scale
     raw_score = combined.get("risk_score") or combined.get("risk") or 0.0
     try:
       score = float(raw_score)
@@ -132,7 +176,6 @@ def predict_anomaly(
     except Exception:
       score = 0.0
 
-    # Non-blocking async dispatch when risk exceeds critical threshold
     if score >= 70.0 or "CRITICAL" in str(combined).upper():
       background_tasks.add_task(dispatch_webhook_task, combined, score)
     else:
