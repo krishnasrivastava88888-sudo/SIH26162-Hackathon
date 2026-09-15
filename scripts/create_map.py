@@ -473,7 +473,7 @@ dashboard_template = f"""<!DOCTYPE html>
 </html>
 """
 
-with open("dashboard.html", "w", encoding="utf-8") as f:
+with open("map.html", "w", encoding="utf-8") as f:
     f.write(dashboard_template)
 
-print("dashboard.html successfully compiled with ML telemetry and AI explainability cards.")
+print("map.html successfully compiled with ML telemetry and AI explainability cards.")

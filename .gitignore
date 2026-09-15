@@ -15,4 +15,5 @@ __pycache__/
 Thumbs.db
 
 # Logs
-*.log
+*.logmap.html
+map.html
