@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  thermoguard-api:
+    build: .
+    container_name: thermoguard_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/thermoguard
+    restart: always
+
+  # Optional PostGIS container instance if running completely containerized
+  db:
+    image: postgis/postgis:15-3.3
+    container_name: thermoguard_postgis
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: thermoguard
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: always
+
+volumes:
+  pgdata:
