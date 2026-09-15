@@ -562,7 +562,7 @@
         </div>
         <div class="input-field">
           <label>Distance to Nearest Facility: <span id="val-sim-dist" style="color: var(--accent-cyan);">0.65 km</span></label>
-          <input type="range" id="sim-dist" min="0.1" max="25" step="0.05" value="0.65" oninput="document.getElementById('val-sim-dist').innerText = this.value + ' km'" />
+          <input type="range" id="sim-dist" min="0.0" max="25" step="0.05" value="0.65" oninput="document.getElementById('val-sim-dist').innerText = this.value + ' km'" />
         </div>
         <div class="input-field">
           <label>30-Day Persistence Count: <span id="val-sim-pers" style="color: var(--accent-cyan);">1 detection</span></label>
@@ -696,31 +696,24 @@
         const events = eRes ? await eRes.json() : [];
 
         const eventMap = new Map();
-events.forEach(e => eventMap.set(e.anomaly_id, e));
+        events.forEach(e => eventMap.set(e.anomaly_id, e));
 
-allHotspots = hotspots.map(h => {
-    const ev = eventMap.get(h.id) || {};
+        allHotspots = hotspots.map(h => {
+            const ev = eventMap.get(h.id) || {};
 
-    return {
-        ...h,
-
-        // Correct backend event fields
-        classification: ev.classification || h.classification || 'AGRICULTURAL_FIRE',
-        confidence: ev.confidence_score ?? 0.95,
-        explanation: ev.ml_explanation || 'Evaluated by ThermoGuard RF-v2.0 geospatial pipeline.',
-
-        // Industrial facility information
-        facility_name:
-            ev.nearest_facility ||
-            (h.distance_to_facility_km != null && h.distance_to_facility_km < 5
-                ? 'Industrial Buffer Zone'
-                : 'Rural Sector'),
-
-        // Keep the backend GIS values available
-        distance_to_facility_km:
-            ev.distance_to_facility_km ?? h.distance_to_facility_km
-    };
-});
+            return {
+                ...h,
+                classification: ev.classification || h.classification || 'AGRICULTURAL_FIRE',
+                confidence: ev.confidence_score ?? 0.95,
+                explanation: ev.ml_explanation || 'Evaluated by ThermoGuard RF-v2.0 geospatial pipeline.',
+                facility_name:
+                    ev.nearest_facility ||
+                    (h.distance_to_facility_km != null && h.distance_to_facility_km < 5
+                        ? 'Industrial Buffer Zone'
+                        : 'Rural Sector'),
+                distance_to_facility_km: ev.distance_to_facility_km ?? h.distance_to_facility_km
+            };
+        });
 
         updateKPIs();
         renderMapAndFeed();
@@ -789,7 +782,11 @@ allHotspots = hotspots.map(h => {
           }).addTo(hotspotLayerGroup);
         }
 
-                // Popup with Risk Telemetry
+        // FORMAT DISTANCE CORRECTLY (The 0-Falsy Fix)
+        const displayDistance = h.distance_to_facility_km != null ? h.distance_to_facility_km.toFixed(2) : '99.0';
+        const displayFrp = h.frp != null ? h.frp.toFixed(1) : '0.0';
+
+        // Popup with Risk Telemetry
         marker.bindPopup(`
           <div style="font-family: 'Inter', sans-serif; color: #111827; min-width: 240px;">
 
@@ -840,14 +837,11 @@ allHotspots = hotspots.map(h => {
             </p>
 
             <p style="margin: 3px 0; font-size: 11px;">
-              <strong>Radiative Power:</strong> ${h.frp.toFixed(1)} MW
+              <strong>Radiative Power:</strong> ${displayFrp} MW
             </p>
 
             <p style="margin: 3px 0; font-size: 11px;">
-              <strong>Proximity:</strong>
-              ${h.distance_to_facility_km != null
-                ? h.distance_to_facility_km.toFixed(2) + ' km'
-                : 'N/A'}
+              <strong>Proximity:</strong> ${displayDistance} km
             </p>
 
             <p style="margin: 3px 0; font-size: 11px;">
@@ -885,8 +879,8 @@ allHotspots = hotspots.map(h => {
           </div>
           <div class="event-facility">${h.facility_name}</div>
           <div class="badge-strip">
-            <span class="telemetry-chip">⚡ ${h.frp.toFixed(1)} MW FRP</span>
-            <span class="telemetry-chip">📏 ${h.distance_to_facility_km ? h.distance_to_facility_km.toFixed(1) : '99.0'} km dist</span>
+            <span class="telemetry-chip">⚡ ${displayFrp} MW FRP</span>
+            <span class="telemetry-chip">📏 ${displayDistance} km dist</span>
             <span class="telemetry-chip">🔄 ${h.persistence_count_30d || 1}d recur</span>
           </div>
           <div class="event-xai">
